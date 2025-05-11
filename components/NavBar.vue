@@ -3,14 +3,30 @@
         <div class="navbar-left">
             <img src="/Users/mac/spotify-clone/assets/Spotify-Icon-Logo.wine.png" class="logo" />
             <div class="nav-icons">
-                <button class="icon-button"><i class="fas fa-home"></i></button>
+                <button class="icon-button" @click="navigateToHome"><i class="fas fa-home"></i></button>
             </div>
         </div>
   
-        <div class="search-box">
+        <div class="search-box" ref="searchBoxRef">
             <i class="fas fa-search"></i>
-            <input type="text" placeholder="What do you want to play?" />
-            <i class="fas fa-box"></i>
+            <input 
+                type="text" 
+                placeholder="What do you want to play?"
+                v-model="searchQuery"
+                @input="handleSearch"
+                @focus="showSearchResults = true"
+            />
+            <button v-if="searchQuery" class="clear-search-btn" @click="clearSearch">
+                <i class="fas fa-times"></i>
+            </button>
+            
+            <!-- Search results dropdown -->
+            <SearchResults 
+                v-if="showSearchResults && searchResults && searchQuery" 
+                :results="searchResults" 
+                :searchQuery="searchQuery"
+                :onClose="() => showSearchResults = false"
+            />
         </div>
   
         <div class="nav-actions">
@@ -19,12 +35,33 @@
                 <span>Install App</span>
             </div>
             <i class="fas fa-bell notification-icon"></i>
-            <button @click="handleLogin" class="login-button">Login</button>
-            <NuxtLink to="/profile" class="profile-link">
-                <i class="fas fa-user"></i>
-                <span>Profile</span>
-            </NuxtLink>
-            <img src="/Users/mac/spotify-clone/assets/386c5283f14bdca0fa14e28dd18fb574.png" class="avatar" @click="navigateToProfile" />
+            
+            <!-- Updated authentication-based UI -->
+            <button v-if="!isAuthenticated" @click="handleLogin" class="login-button">Login</button>
+            <button v-else @click="handleLogout" class="logout-button">Logout</button>
+            
+            
+            <!-- Show user avatar if available -->
+            <img 
+                v-if="authState.profile && authState.profile.images && authState.profile.images[0]"
+                :src="authState.profile.images[0].url" 
+                class="avatar" 
+                @click="navigateToProfile" 
+                :alt="authState.profile.display_name"
+            />
+            <div 
+                v-else-if="isAuthenticated && authState.profile"
+                class="avatar avatar-placeholder"
+                @click="navigateToProfile"
+            >
+                {{ getInitials(authState.profile.display_name) }}
+            </div>
+            <img 
+                v-else
+                src="/Users/mac/spotify-clone/assets/386c5283f14bdca0fa14e28dd18fb574.png" 
+                class="avatar" 
+                @click="navigateToProfile" 
+            />
         </div>
     </nav>
 </template>
@@ -32,12 +69,70 @@
 <script setup>
 import { useLoginWithSpotify } from '../composables/useloginusingSpotify';
 import { useRouter } from 'vue-router';
+import { useAuth } from '../composables/useAuth';
+import { useSearch } from '../composables/useSearch';
+import { ref, onMounted, onUnmounted } from 'vue';
+import SearchResults from './SearchResults.vue';
 
 const { loginWithSpotify } = useLoginWithSpotify();
 const router = useRouter();
+const { state: authState, logout, isAuthenticated } = useAuth();
+const { search, clearSearch: resetSearch, searchResults } = useSearch();
+
+const searchQuery = ref('');
+const showSearchResults = ref(false);
+const searchBoxRef = ref(null);
+const searchDebounceTimer = ref(null);
+
+// Debounced search function to prevent too many API calls
+const handleSearch = () => {
+  // Clear previous timer
+  if (searchDebounceTimer.value) {
+    clearTimeout(searchDebounceTimer.value);
+  }
+  
+  // Set new timer (300ms debounce)
+  searchDebounceTimer.value = setTimeout(async () => {
+    if (searchQuery.value.trim()) {
+      await search(searchQuery.value, ['track', 'album', 'artist']);
+      showSearchResults.value = true;
+    } else {
+      resetSearch();
+      showSearchResults.value = false;
+    }
+  }, 300);
+};
+
+// Clear search input and results
+const clearSearch = () => {
+  searchQuery.value = '';
+  resetSearch();
+  showSearchResults.value = false;
+};
+
+// Handle clicks outside the search box to close results
+const handleClickOutside = (event) => {
+  if (searchBoxRef.value && !searchBoxRef.value.contains(event.target)) {
+    showSearchResults.value = false;
+  }
+};
+
+// Get user initials for avatar placeholder
+const getInitials = (name) => {
+  if (!name) return '?';
+  return name.split(' ')
+    .map(word => word.charAt(0).toUpperCase())
+    .join('')
+    .substring(0, 2);
+};
 
 const handleLogin = () => {
   loginWithSpotify();
+};
+
+const handleLogout = () => {
+  logout();
+  router.push('/');
 };
 
 const navigateToProfile = () => {
@@ -47,6 +142,18 @@ const navigateToProfile = () => {
 const navigateToHome = () => {
   router.push('/');
 };
+
+// Setup and cleanup click outside listener
+onMounted(() => {
+  document.addEventListener('click', handleClickOutside);
+});
+
+onUnmounted(() => {
+  document.removeEventListener('click', handleClickOutside);
+  if (searchDebounceTimer.value) {
+    clearTimeout(searchDebounceTimer.value);
+  }
+});
 </script>
 
 <style scoped>
@@ -91,6 +198,7 @@ const navigateToHome = () => {
 }
   
 .search-box {
+    position: relative;
     display: flex;
     align-items: center;
     background: #1c1c1c;
@@ -109,6 +217,18 @@ const navigateToHome = () => {
     color: white;
     margin: 0 10px;
     flex: 1;
+}
+
+.clear-search-btn {
+    background: transparent;
+    border: none;
+    color: gray;
+    cursor: pointer;
+    padding: 5px;
+}
+
+.clear-search-btn:hover {
+    color: white;
 }
   
 .nav-actions {
@@ -157,6 +277,21 @@ const navigateToHome = () => {
     transform: scale(1.03);
 }
 
+.logout-button {
+    background: #db1010;
+    color: white;
+    border: none;
+    border-radius: 20px;
+    padding: 8px 16px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: background-color 0.3s;
+}
+.logout-button:hover {
+    background: #db1010;
+    transform: scale(1.03);
+}
+
 .profile-link {
     display: flex;
     align-items: center;
@@ -170,5 +305,15 @@ const navigateToHome = () => {
   
 .profile-link:hover {
     background-color: #282828;
+}
+
+.avatar-placeholder {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background-color: #282828;
+  font-weight: bold;
+  color: white;
+  font-size: 12px;
 }
 </style>
